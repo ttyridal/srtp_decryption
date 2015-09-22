@@ -1,8 +1,15 @@
-CIPHER_KEY_LENGTH = (128  / 8)
-CIPHER_SALT_LENGTH = (112 / 8)
+from __future__ import print_function
+
+CIPHER_KEY_LENGTH = (128  // 8)
+CIPHER_SALT_LENGTH = (112 // 8)
 
 import itertools
 from base64 import b64encode
+from binascii import a2b_hex, b2a_hex
+
+import functools
+import struct
+bchr = functools.partial(struct.pack, 'B')
 
 from srtp_decryption import srtp_aes_counter_encrypt, srtp_packet_index, srtp_derive_key_aes_128
 
@@ -73,17 +80,19 @@ rtp_payload_hex= \
 '694d145c84dcd91ebcb0b02727196f1655c6c904baf26b3c66474561290e8e75d6700922b307c254c23d053ddb09455f7972f8b6bb0d33151b772c1f0b515fe55a637c0e6104c1601cb70fde0865687bf077ec5dfbaeb899c1ba81dac384c308ac9ce8204100919a6387d6e6d7e9fcd8a45d9491afb250d87a311607b0f603587053ff261ca3379509b50fc70f2038757dad70befba8411d38d446c6bb8564f9dedaf1afdf6466346b55'
 
 
-keying_material= "".join(chr( int(line[line.rindex(" "):])) for line in key_dump.splitlines())
+keying_material= b"".join(bchr( int(line[line.rindex(" "):])) for line in key_dump.splitlines())
 assert len(keying_material)==CIPHER_KEY_LENGTH*2+CIPHER_SALT_LENGTH*2
 
-rtp_payload= rtp_payload_hex.decode('hex')
+rtp_payload= a2b_hex(rtp_payload_hex)
 
-print "rtp payload size",len(rtp_payload)
+print( "rtp payload size",len(rtp_payload))
 
 ck_i=CIPHER_KEY_LENGTH*0 + CIPHER_SALT_LENGTH*0
 sk_i=CIPHER_KEY_LENGTH*1 + CIPHER_SALT_LENGTH*0
 cs_i=CIPHER_KEY_LENGTH*2 + CIPHER_SALT_LENGTH*0
 ss_i=CIPHER_KEY_LENGTH*2 + CIPHER_SALT_LENGTH*1
+
+print(ck_i, CIPHER_KEY_LENGTH)
 
 client_master_key= keying_material[ ck_i : ck_i + CIPHER_KEY_LENGTH]
 server_master_key= keying_material[ sk_i : sk_i + CIPHER_KEY_LENGTH]
@@ -94,25 +103,25 @@ server_master_salt= keying_material[ ss_i : ss_i + CIPHER_SALT_LENGTH]
 
 #k,s= master_k, master_s
 
-print "\nCLIENT"
+print( "\nCLIENT")
 master_k, master_s= client_master_key, client_master_salt   #We are the client
-print "master key is ",master_k.encode('hex')
-print "master salt is ",master_s.encode('hex')
-print "SDES:", b64encode(master_k+master_s)
-k,s,a = srtp_derive_key_aes_128(master_k,master_s) 
-print "derived key is ",k.encode('hex')
-print "derived salt is ",s.encode('hex')
-print "derived auth is ",a.encode('hex')
+print( "master key is ",b2a_hex(master_k))
+print( "master salt is ",b2a_hex(master_s))
+print( "SDES:", b64encode(master_k+master_s))
+k,s,a = srtp_derive_key_aes_128(master_k,master_s)
+print( "derived key is ",b2a_hex(k))
+print( "derived salt is ",b2a_hex(s))
+print( "derived auth is ",b2a_hex(a))
 
-print "\nSERVER"
+print( "\nSERVER")
 master_k, master_s= server_master_key, server_master_salt   #We are the server
-print "master key is ",master_k.encode('hex')
-print "master salt is ",master_s.encode('hex')
-print "SDES:", b64encode(master_k+master_s)
-k,s,a = srtp_derive_key_aes_128(master_k,master_s) 
-print "derived key is ",k.encode('hex')
-print "derived salt is ",s.encode('hex')
-print "derived auth is ",a.encode('hex')
+print( "master key is ",b2a_hex(master_k))
+print( "master salt is ",b2a_hex(master_s))
+print( "SDES:", b64encode(master_k+master_s))
+k,s,a = srtp_derive_key_aes_128(master_k,master_s)
+print( "derived key is ",b2a_hex(k))
+print( "derived salt is ",b2a_hex(s))
+print( "derived auth is ",b2a_hex(a))
 
 '''
 ssrc= 0x0aeed995
@@ -120,12 +129,12 @@ seq= 6391
 roc= 0 #always starts at 0
 
 packet_i= srtp_packet_index(roc, seq)
-print "rtp payload size",len(rtp_payload)
+print( "rtp payload size",len(rtp_payload))
 
 plaintext= srtp_aes_counter_encrypt( k, s, packet_i, ssrc, rtp_payload )
 
-print rtp_payload.encode('hex')
-print plaintext.encode('hex')
+print( rtp_payload.encode('hex'))
+print( plaintext.encode('hex'))
 
 #import pylab
 #pylab.plot( map(ord, rtp_payload) )
