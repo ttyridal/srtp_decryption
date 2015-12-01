@@ -14,8 +14,8 @@ def int_to_bytes( i, n_bytes ):
     #converts a integer to n bytes (unsigned, big endian)
     return BitArray(uint=i, length=n_bytes*8).bytes
 
-def bytes_to_int( bytes ):
-    return int( b2a_hex(bytes), 16)
+def bytes_to_int( b ):
+    return int( b2a_hex(b), 16)
 
 def zero_pad(s1,s2):
     #makes bytestrings the same size by zero padding the most significant bits
