@@ -150,6 +150,34 @@ def test_srtp_aes_ctr_vectors():
     assert result[0xff00*16:0xff01*16]==a2b_hex('362B7C3C6773516318A077D7FC5073AE')
     assert result[0xff01*16:0xff02*16]==a2b_hex('6A2CC3787889374FBEB4C81B17BA6C44')
 
+def test_srtp_packet_index_respected():
+    session_key = a2b_hex('66e94bd4ef8a2c3b884cfa59ca342b2e')
+    session_salt = a2b_hex('b5b03421de8bbffc4eadec767339')
+    roc = 0
+    data = b'hello\n\0'
+    ssrc = 0xdeadbeef
+
+    seq = 1
+    packet_i= srtp_packet_index(roc, seq)
+    ks = srtp_aes_counter_keystream(session_key, session_salt, packet_i, ssrc, 16)
+    result = srtp_aes_counter_encrypt( session_key, session_salt, packet_i, ssrc, data)
+    assert ks == a2b_hex('5a11957692c23f3f7ee8ddc76c38df14')
+    assert result == a2b_hex('3274f91afdc83f')
+
+    seq += 1
+    packet_i= srtp_packet_index(roc, seq)
+    ks = srtp_aes_counter_keystream(session_key, session_salt, packet_i, ssrc, 16)
+    result = srtp_aes_counter_encrypt( session_key, session_salt, packet_i, ssrc, data)
+    assert ks == a2b_hex('20afa8428e8c4fd4699156c650047339')
+    assert result == a2b_hex('48cac42ee1864f')
+
+    seq += 1
+    packet_i= srtp_packet_index(roc, seq)
+    ks = srtp_aes_counter_keystream(session_key, session_salt, packet_i, ssrc, 16)
+    result = srtp_aes_counter_encrypt( session_key, session_salt, packet_i, ssrc, data)
+    assert ks == a2b_hex('41c32fab452ca5d13a536a93ece44f7d')
+    assert result == a2b_hex('29a643c72a26a5')
+
 def test_xor():
     assert xor(b'\0\0\1', b'\0\0\2') == b'\0\0\3'
     assert xor(b'\0\0\1', b'\0\0\2', b'\1\0\0') == b'\1\0\3'
@@ -160,6 +188,7 @@ def run_tests():
     test_xor()
     test_srtp_key_derivation_vectors()
     test_srtp_aes_ctr_vectors()
+    test_srtp_packet_index_respected()
 
 if __name__=='__main__':
     run_tests()
