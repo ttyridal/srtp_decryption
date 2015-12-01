@@ -34,8 +34,11 @@ def xor( *args ):
     #s1,s2= zero_pad(args[0], xor(*args[1:])) #recursive
     #print "xoring", s1.encode('hex'), s2.encode('hex')
     #return "".join( chr(ord(a) ^ ord(b)) for a,b in zip(s1,s2))
-    s1,s2= args[:2]
-    return int_to_bytes( bytes_to_int(s1) ^ bytes_to_int(s2), max(len(s1), len(s2)))
+    m = max(map(len, args))
+    s1 = args[0]
+    for s2 in args[1:]:
+        s1 = int_to_bytes( bytes_to_int(s1) ^ bytes_to_int(s2), m)
+    return s1
 
 def srtp_div(s1,s2):
     '''div (modulus) operation, as defined in https://tools.ietf.org/html/rfc3711#section-4.3.1.
@@ -147,7 +150,14 @@ def test_srtp_aes_ctr_vectors():
     assert result[0xff00*16:0xff01*16]==a2b_hex('362B7C3C6773516318A077D7FC5073AE')
     assert result[0xff01*16:0xff02*16]==a2b_hex('6A2CC3787889374FBEB4C81B17BA6C44')
 
+def test_xor():
+    assert xor(b'\0\0\1', b'\0\0\2') == b'\0\0\3'
+    assert xor(b'\0\0\1', b'\0\0\2', b'\1\0\0') == b'\1\0\3'
+    # four argument version used in srtp_aes_counter_keystream
+    assert xor(b'\0\0\1', b'\0\0\2', b'\1\0\0', b'\0\1\0') == b'\1\1\3'
+
 def run_tests():
+    test_xor()
     test_srtp_key_derivation_vectors()
     test_srtp_aes_ctr_vectors()
 
