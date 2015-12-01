@@ -95,7 +95,7 @@ def srtp_aes_counter_encrypt( session_key, session_salt, packet_index, ssrc, dat
     '''En/decrypts SRTP data using AES counter keystream.
     https://tools.ietf.org/html/rfc3711#section-4.1.1'''
     ds= len(data)
-    keystream_size= ((ds/16)+1)*16 if (ds/16*16!=ds) else ds #nearest (upper-rounded) size to len(data) multiple of AES block size
+    keystream_size= ((ds//16)+1)*16 if (ds//16*16!=ds) else ds #nearest (upper-rounded) size to len(data) multiple of AES block size
     keystream= srtp_aes_counter_keystream( session_key, session_salt, packet_index, ssrc, keystream_size, counter_offset=0 )
     return xor(data, keystream[:ds])
 
