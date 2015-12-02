@@ -3,9 +3,10 @@ import Crypto.Util.Counter as AESCounter
 
 from struct import pack,unpack
 from bitstring import BitArray #pip install bitstring
-from functools import partial
+from functools import partial, reduce
 from base64 import b64decode
 from binascii import a2b_hex, b2a_hex
+import operator
 
 
 #------------- BASIC BYTESTRING MANIPULATION OPERATIONS ----------------
@@ -29,16 +30,10 @@ def zero_pad(s1,s2):
 
 def xor( *args ):
     '''xors two or more bytestrings'''
-    if len(args)==1:
-        return args[0]
-    #s1,s2= zero_pad(args[0], xor(*args[1:])) #recursive
-    #print "xoring", s1.encode('hex'), s2.encode('hex')
-    #return "".join( chr(ord(a) ^ ord(b)) for a,b in zip(s1,s2))
-    m = max(map(len, args))
-    s1 = args[0]
-    for s2 in args[1:]:
-        s1 = int_to_bytes( bytes_to_int(s1) ^ bytes_to_int(s2), m)
-    return s1
+    size= max(map(len, args))
+    args_int= map(bytes_to_int, args)
+    result_ints= reduce(operator.xor, args_int)
+    return int_to_bytes(result_ints, size)
 
 def srtp_div(s1,s2):
     '''div (modulus) operation, as defined in https://tools.ietf.org/html/rfc3711#section-4.3.1.
@@ -181,6 +176,7 @@ def test_srtp_packet_index_respected():
 def test_xor():
     assert xor(b'\0\0\1', b'\0\0\2') == b'\0\0\3'
     assert xor(b'\0\0\1', b'\0\0\2', b'\1\0\0') == b'\1\0\3'
+    assert xor(b'\0\0\1', b'\0\0\2', b'\1\1\0\0') == b'\1\1\0\3'
     # four argument version used in srtp_aes_counter_keystream
     assert xor(b'\0\0\1', b'\0\0\2', b'\1\0\0', b'\0\1\0') == b'\1\1\3'
 
