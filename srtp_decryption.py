@@ -3,9 +3,10 @@ import Crypto.Util.Counter as AESCounter
 
 from struct import pack,unpack
 from bitstring import BitArray #pip install bitstring
-from functools import partial
+from functools import partial, reduce
 from base64 import b64decode
 from binascii import a2b_hex, b2a_hex
+import operator
 
 
 #------------- BASIC BYTESTRING MANIPULATION OPERATIONS ----------------
@@ -14,8 +15,8 @@ def int_to_bytes( i, n_bytes ):
     #converts a integer to n bytes (unsigned, big endian)
     return BitArray(uint=i, length=n_bytes*8).bytes
 
-def bytes_to_int( bytes ):
-    return int( b2a_hex(bytes), 16)
+def bytes_to_int( b ):
+    return int( b2a_hex(b), 16)
 
 def zero_pad(s1,s2):
     #makes bytestrings the same size by zero padding the most significant bits
@@ -29,13 +30,10 @@ def zero_pad(s1,s2):
 
 def xor( *args ):
     '''xors two or more bytestrings'''
-    if len(args)==1:
-        return args[0]
-    #s1,s2= zero_pad(args[0], xor(*args[1:])) #recursive
-    #print "xoring", s1.encode('hex'), s2.encode('hex')
-    #return "".join( chr(ord(a) ^ ord(b)) for a,b in zip(s1,s2))
-    s1,s2= args[:2]
-    return int_to_bytes( bytes_to_int(s1) ^ bytes_to_int(s2), max(len(s1), len(s2)))
+    size= max(map(len, args))
+    args_int= map(bytes_to_int, args)
+    result_ints= reduce(operator.xor, args_int)
+    return int_to_bytes(result_ints, size)
 
 def srtp_div(s1,s2):
     '''div (modulus) operation, as defined in https://tools.ietf.org/html/rfc3711#section-4.3.1.
@@ -92,7 +90,7 @@ def srtp_aes_counter_encrypt( session_key, session_salt, packet_index, ssrc, dat
     '''En/decrypts SRTP data using AES counter keystream.
     https://tools.ietf.org/html/rfc3711#section-4.1.1'''
     ds= len(data)
-    keystream_size= ((ds/16)+1)*16 if (ds/16*16!=ds) else ds #nearest (upper-rounded) size to len(data) multiple of AES block size
+    keystream_size= ((ds//16)+1)*16 if (ds//16*16!=ds) else ds #nearest (upper-rounded) size to len(data) multiple of AES block size
     keystream= srtp_aes_counter_keystream( session_key, session_salt, packet_index, ssrc, keystream_size, counter_offset=0 )
     return xor(data, keystream[:ds])
 
@@ -147,9 +145,46 @@ def test_srtp_aes_ctr_vectors():
     assert result[0xff00*16:0xff01*16]==a2b_hex('362B7C3C6773516318A077D7FC5073AE')
     assert result[0xff01*16:0xff02*16]==a2b_hex('6A2CC3787889374FBEB4C81B17BA6C44')
 
+def test_srtp_packet_index_respected():
+    session_key = a2b_hex('66e94bd4ef8a2c3b884cfa59ca342b2e')
+    session_salt = a2b_hex('b5b03421de8bbffc4eadec767339')
+    roc = 0
+    data = b'hello\n\0'
+    ssrc = 0xdeadbeef
+
+    seq = 1
+    packet_i= srtp_packet_index(roc, seq)
+    ks = srtp_aes_counter_keystream(session_key, session_salt, packet_i, ssrc, 16)
+    result = srtp_aes_counter_encrypt( session_key, session_salt, packet_i, ssrc, data)
+    assert ks == a2b_hex('5a11957692c23f3f7ee8ddc76c38df14')
+    assert result == a2b_hex('3274f91afdc83f')
+
+    seq += 1
+    packet_i= srtp_packet_index(roc, seq)
+    ks = srtp_aes_counter_keystream(session_key, session_salt, packet_i, ssrc, 16)
+    result = srtp_aes_counter_encrypt( session_key, session_salt, packet_i, ssrc, data)
+    assert ks == a2b_hex('20afa8428e8c4fd4699156c650047339')
+    assert result == a2b_hex('48cac42ee1864f')
+
+    seq += 1
+    packet_i= srtp_packet_index(roc, seq)
+    ks = srtp_aes_counter_keystream(session_key, session_salt, packet_i, ssrc, 16)
+    result = srtp_aes_counter_encrypt( session_key, session_salt, packet_i, ssrc, data)
+    assert ks == a2b_hex('41c32fab452ca5d13a536a93ece44f7d')
+    assert result == a2b_hex('29a643c72a26a5')
+
+def test_xor():
+    assert xor(b'\0\0\1', b'\0\0\2') == b'\0\0\3'
+    assert xor(b'\0\0\1', b'\0\0\2', b'\1\0\0') == b'\1\0\3'
+    assert xor(b'\0\0\1', b'\0\0\2', b'\1\1\0\0') == b'\1\1\0\3'
+    # four argument version used in srtp_aes_counter_keystream
+    assert xor(b'\0\0\1', b'\0\0\2', b'\1\0\0', b'\0\1\0') == b'\1\1\3'
+
 def run_tests():
+    test_xor()
     test_srtp_key_derivation_vectors()
     test_srtp_aes_ctr_vectors()
+    test_srtp_packet_index_respected()
 
 if __name__=='__main__':
     run_tests()
