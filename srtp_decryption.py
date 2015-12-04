@@ -1,5 +1,7 @@
 import Crypto.Cipher.AES as AES
 import Crypto.Util.Counter as AESCounter
+from Crypto.Hash.HMAC import HMAC
+import Crypto.Hash.SHA
 
 from struct import pack,unpack
 from bitstring import BitArray #pip install bitstring
@@ -8,6 +10,8 @@ from base64 import b64decode
 from binascii import a2b_hex, b2a_hex
 import operator
 
+
+class AuthenticationFailure(Exception): pass
 
 #------------- BASIC BYTESTRING MANIPULATION OPERATIONS ----------------
 
@@ -95,13 +99,18 @@ def srtp_aes_counter_encrypt( session_key, session_salt, packet_index, ssrc, dat
     return xor(data, keystream[:ds])
 
 
-def srtp_derive_key_aes_128( master_key, master_salt):
+def srtp_derive_key_aes_128( master_key, master_salt, rtcp=False):
     '''SRTP key derivation, https://tools.ietf.org/html/rfc3711#section-4.3'''
     assert len(master_key)==128/8
     assert len(master_salt)==112/8
-    CIPHER_LABEL=          int_to_bytes( 0, 1 )
-    SALT_LABEL=            int_to_bytes( 2, 1 )
-    AUTH_LABEL=            int_to_bytes( 1, 1 )
+    if rtcp:
+        CIPHER_LABEL=      int_to_bytes( 3, 1 )
+        AUTH_LABEL=        int_to_bytes( 4, 1 )
+        SALT_LABEL=        int_to_bytes( 5, 1 )
+    else:
+        CIPHER_LABEL=      int_to_bytes( 0, 1 )
+        AUTH_LABEL=        int_to_bytes( 1, 1 )
+        SALT_LABEL=        int_to_bytes( 2, 1 )
     KEY_DERIVATION_RATE=   int_to_bytes( 0, 6 )
     PACKET_INDEX=          int_to_bytes( 0, 6 )
     LOTS_OF_ZEROS=         b'\0'*32                   #for PRNG
@@ -116,6 +125,45 @@ def srtp_derive_key_aes_128( master_key, master_salt):
     auth_key=   derive_key_from_label(AUTH_LABEL)[:20]   #??? not sure of size
 
     return cipher_key, salt_key, auth_key
+
+def srtp_verify_and_strip_signature( auth_key, rtp_packet, roc, hash_function=Crypto.Hash.SHA, hash_length=80 ):
+    assert hash_length % 8 == 0
+    hash_length = hash_length // 8
+
+    h = HMAC( auth_key, rtp_packet[:-hash_length] + int_to_bytes(roc, 4), hash_function ).digest()
+    if h[:hash_length] == rtp_packet[-hash_length:]:
+        return rtp_packet[:-hash_length]
+    else:
+        raise AuthenticationFailure()
+
+def srtcp_verify_and_strip_signature( auth_key, rtcp_packet, hash_function=Crypto.Hash.SHA, hash_length=80 ):
+    assert hash_length % 8 == 0
+    hash_length = hash_length // 8
+
+    h = HMAC( auth_key, rtcp_packet[:-hash_length], hash_function ).digest()
+    if h[:hash_length] == rtcp_packet[-hash_length:]:
+        packet_i = bytes_to_int( rtcp_packet[-hash_length-4:-hash_length] )
+        encrypted = packet_i & (1<<31) != 0
+        packet_i = packet_i & ((1<<31) - 1)
+        return rtcp_packet[:-hash_length-4], packet_i, encrypted
+    else:
+        raise AuthenticationFailure()
+
+def srtp_sign_packet( auth_key, rtp_packet, roc, hash_function=Crypto.Hash.SHA, hash_length=80 ):
+    assert(hash_length % 8 == 0)
+    hash_length = hash_length // 8
+    h = HMAC(auth_key, rtp_packet + int_to_bytes(roc, 4), hash_function ).digest()
+    return rtp_packet + h[:hash_length]
+
+def srtcp_sign_packet( auth_key, rtcp_packet, index, is_encrypted, hash_function=Crypto.Hash.SHA, hash_length=80 ):
+    assert(hash_length % 8 == 0)
+    hash_length = hash_length // 8
+    index = index % (2**30)
+    if is_encrypted:
+        index += 1 << 31
+    index = int_to_bytes(index, 4)
+    h = HMAC(auth_key, rtcp_packet + index, hash_function ).digest()
+    return rtcp_packet + index + h[:hash_length]
 
 
 #------------- TEST FUNCTIONS ----------------
@@ -180,11 +228,47 @@ def test_xor():
     # four argument version used in srtp_aes_counter_keystream
     assert xor(b'\0\0\1', b'\0\0\2', b'\1\0\0', b'\0\1\0') == b'\1\1\3'
 
+def test_srtp_auth():
+    m = b"hello_rtp"
+    master_key=  a2b_hex('00000000000000000000000000000000')
+    master_salt= a2b_hex('0000000000000000000000000000')
+    ck,sk,ak= srtp_derive_key_aes_128(master_key, master_salt)
+    assert b2a_hex(ak) == b'788bcd111ecf73d4e78d2e21bef55460daacdaf7'
+
+    ma = srtp_sign_packet(ak, m, 0)
+
+    assert b2a_hex(ma[-10:]) == b'e60c68053178ee795142'
+    assert srtp_verify_and_strip_signature(ak, ma, 0) == m
+    try:
+        srtp_verify_and_strip_signature(ak, ma, 1) # wrong roc should fail authentication
+        assert False
+    except AuthenticationFailure:
+        pass
+
+    try:
+        srtp_verify_and_strip_signature(ak, b'\xff' + ma[1:], 1) # modified message should fail auth
+        assert False
+    except AuthenticationFailure:
+        pass
+
+    ck,sk,ak= srtp_derive_key_aes_128(master_key, master_salt, rtcp=True)
+    encrypted_srtcp = True
+    packet_i_srtcp = 1
+    data = a2b_hex ('80cc000810feff99466c75782105000310feff990000100200001603000000090000000400000001a0573cb69ef3c96e1253')
+    data2 = a2b_hex('80cc000810feff99466c75782105000310feff990000100200001603000000090000000480000002e24513e079e366eb82e6')
+
+    assert srtcp_sign_packet(ak, data[:-14], packet_i_srtcp, not encrypted_srtcp) == data
+    assert srtcp_verify_and_strip_signature(ak, data) == (data[:-14], packet_i_srtcp, not encrypted_srtcp)
+
+    assert srtcp_sign_packet(ak, data[:-14], packet_i_srtcp+1, encrypted_srtcp) == data2
+    assert srtcp_verify_and_strip_signature(ak, data2) == (data2[:-14], packet_i_srtcp+1, encrypted_srtcp)
+
 def run_tests():
     test_xor()
     test_srtp_key_derivation_vectors()
     test_srtp_aes_ctr_vectors()
     test_srtp_packet_index_respected()
+    test_srtp_auth()
 
 if __name__=='__main__':
     run_tests()
